@@ -1640,6 +1640,76 @@ async function handleCopySyncCode() {
   }
 }
 
+// 8. スマホアクセス用 QRコード生成
+function renderQrCode(urlText) {
+  const container = document.getElementById("qrCodeCanvasContainer");
+  if (!container) return;
+  container.innerHTML = "";
+  const cleanUrl = (urlText || "").trim() || window.location.href;
+
+  if (typeof QRCode !== "undefined") {
+    new QRCode(container, {
+      text: cleanUrl,
+      width: 196,
+      height: 196,
+      colorDark: "#1e3a8a",
+      colorLight: "#ffffff",
+      correctLevel: QRCode.CorrectLevel.M,
+    });
+  } else {
+    // 万一CDNスクリプトがブロックされた場合のSVG/画像APIフォールバック
+    const img = document.createElement("img");
+    img.src = `https://api.qrserver.com/v1/create-qr-code/?size=196x196&data=${encodeURIComponent(cleanUrl)}`;
+    img.alt = "QR Code";
+    img.width = 196;
+    img.height = 196;
+    container.appendChild(img);
+  }
+}
+
+async function initQrModalUrl() {
+  const urlInput = document.getElementById("qrTargetUrlInput");
+  const hintEl = document.getElementById("qrUrlHintText");
+  if (!urlInput) return;
+
+  let targetUrl = window.location.href;
+
+  // ローカル（localhost / 127.0.0.1）で Flask サーバー起動中の場合は、スマホから直接繋がる LAN IP を自動取得
+  if (
+    state.mode === "api" &&
+    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+  ) {
+    try {
+      const res = await fetch("/api/network-info");
+      const data = await res.json();
+      if (res.ok && data.lan_url) {
+        targetUrl = data.lan_url;
+        if (hintEl) {
+          hintEl.innerHTML = `<i class="bi bi-wifi text-success me-1"></i><strong>自宅Wi-Fiモード:</strong> 同じWi-Fiに接続したスマホで読み取ると、PCのサーバー (<code>${escapeHtml(
+            data.lan_url
+          )}</code>) に直接繋がります。`;
+        }
+      }
+    } catch (_) {
+      // ignore
+    }
+  } else if (window.location.protocol === "file:") {
+    // ローカルファイルを直接開いている場合は保存済みのGitHub Pages URLまたは入力案内を表示
+    const savedUrl = localStorage.getItem("price_stock_public_url") || "";
+    targetUrl = savedUrl || "https://example.github.io/price-manager/";
+    if (hintEl) {
+      hintEl.innerHTML = `<i class="bi bi-info-circle text-primary me-1"></i>GitHub Pages に公開したURLを上の欄に入力すると、そのURLのQRコードが生成されます（自動保存されます）。`;
+    }
+  } else if (hintEl) {
+    hintEl.innerHTML = `<i class="bi bi-globe text-success me-1"></i>現在開いている公開URL (<code>${escapeHtml(
+      targetUrl
+    )}</code>) のQRコードを表示しています。`;
+  }
+
+  urlInput.value = targetUrl;
+  renderQrCode(targetUrl);
+}
+
 async function handlePasteSyncCode() {
   try {
     let code = "";
@@ -1798,6 +1868,27 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
   document.getElementById("copySyncCodeBtn")?.addEventListener("click", handleCopySyncCode);
   document.getElementById("pasteSyncCodeBtn")?.addEventListener("click", handlePasteSyncCode);
+
+  // スマホQRコードモーダル関連イベント
+  const qrModalEl = document.getElementById("qrCodeModal");
+  if (qrModalEl) {
+    qrModalEl.addEventListener("show.bs.modal", () => {
+      initQrModalUrl();
+    });
+  }
+  document.getElementById("qrTargetUrlInput")?.addEventListener("input", (e) => {
+    const val = e.target.value.trim();
+    if (val) {
+      localStorage.setItem("price_stock_public_url", val);
+      renderQrCode(val);
+    }
+  });
+  document.getElementById("copyQrUrlBtn")?.addEventListener("click", async () => {
+    const val = document.getElementById("qrTargetUrlInput")?.value || "";
+    if (!val) return;
+    await navigator.clipboard.writeText(val);
+    showToast("URLをクリップボードにコピーしました！", "primary");
+  });
 
   // 初回全データ読み込み
   try {

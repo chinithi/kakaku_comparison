@@ -39,6 +39,16 @@
           </div>
         </div>
         <div class="d-flex align-items-center gap-2">
+          <button
+            type="button"
+            class="btn btn-sm btn-light text-primary fw-bold rounded-pill px-3 py-1 shadow-xs"
+            id="openQrModalBtn"
+            data-bs-toggle="modal"
+            data-bs-target="#qrCodeModal"
+            title="スマホで読み取ってこのサイトを開く"
+          >
+            <i class="bi bi-qr-code-scan me-1"></i>スマホQR
+          </button>
           <span
             class="badge rounded-pill bg-white text-primary px-3 py-2 shadow-xs"
             id="headerNeedBuyBadge"
@@ -805,6 +815,62 @@
     </div>
   </main>
 
+  <!-- スマホアクセス用 QRコード表示モーダル -->
+  <div
+    class="modal fade"
+    id="qrCodeModal"
+    tabindex="-1"
+    aria-labelledby="qrCodeModalLabel"
+    aria-hidden="true"
+  >
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-0 rounded-4 shadow">
+        <div class="modal-header bg-primary text-white border-0 rounded-top-4">
+          <h5 class="modal-title fw-bold h6 mb-0" id="qrCodeModalLabel">
+            <i class="bi bi-qr-code-scan me-2"></i>スマホでサイトを開く (QRコード)
+          </h5>
+          <button
+            type="button"
+            class="btn-close btn-close-white"
+            data-bs-dismiss="modal"
+            aria-label="閉じる"
+          ></button>
+        </div>
+        <div class="modal-body p-4 text-center">
+          <p class="small text-muted mb-3">
+            スマホのカメラで下のQRコードを読み取ると、このアプリにすぐアクセスできます。
+          </p>
+
+          <!-- QRコード描画ボックス -->
+          <div class="d-inline-block p-3 bg-white border rounded-4 shadow-xs mb-3">
+            <div id="qrCodeCanvasContainer" class="d-flex align-items-center justify-content-center" style="min-width: 200px; min-height: 200px;"></div>
+          </div>
+
+          <!-- URLの直接確認・編集栏（GitHub PagesのURLやローカルLAN IPに自由に変更可能） -->
+          <div class="text-start">
+            <label for="qrTargetUrlInput" class="form-label extra-small fw-bold text-secondary mb-1">
+              QRコードの飛び先URL（変更するとQRコードも即時更新されます）
+            </label>
+            <div class="input-group input-group-sm">
+              <input
+                type="url"
+                id="qrTargetUrlInput"
+                class="form-control font-monospace"
+                placeholder="https://<ユーザー名>.github.io/<リポジトリ名>/"
+              />
+              <button class="btn btn-outline-primary fw-bold" type="button" id="copyQrUrlBtn">
+                <i class="bi bi-clipboard me-1"></i>URLコピー
+              </button>
+            </div>
+            <div class="extra-small text-muted mt-2" id="qrUrlHintText">
+              ※ GitHub Pages で公開した後は自動的にその公開URLのQRコードになります。
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- トースト通知コンテナ -->
   <div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 1080;">
     <div
@@ -828,6 +894,8 @@
     </div>
   </div>
 
+  <!-- QRCode.js CDN (クライアントサイドQRコード生成ライブラリ) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <!-- Bootstrap 5.3 Bundle JS CDN -->
   <script
     src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
