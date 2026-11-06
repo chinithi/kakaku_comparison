@@ -1867,59 +1867,81 @@ async function handleJanDetected(rawJanText) {
 
 async function startCameraBarcodeScanner() {
   const viewport = document.getElementById("barcodeScannerViewport");
+  const placeholder = document.getElementById("scannerPlaceholderText");
   if (!viewport) return;
 
   if (typeof Html5Qrcode === "undefined") {
-    viewport.innerHTML = `
-      <div class="text-warning small text-center py-4 px-3">
-        スキャナーライブラリの読み込みに失敗しました。下の「写真・画像から読取」またはJAN手入力をご利用ください。
-      </div>
-    `;
+    if (placeholder) {
+      placeholder.classList.remove("d-none");
+      placeholder.innerHTML = `
+        <i class="bi bi-exclamation-triangle fs-3 d-block mb-1 text-warning"></i>
+        バーコード読取ライブラリの読み込みに失敗しました。<br/>
+        下の「写真・画像からバーコード読取」またはJAN手入力をご利用ください。
+      `;
+    }
     return;
   }
 
   await stopCameraBarcodeScanner();
   viewport.innerHTML = "";
+  if (placeholder) {
+    placeholder.classList.remove("d-none");
+    placeholder.innerHTML = `
+      <div class="spinner-border spinner-border-sm text-info mb-2" role="status"></div>
+      <div>カメラを起動しています...（ブラウザのカメラ許可が出たら「許可」を押してください）</div>
+    `;
+  }
 
   try {
     html5QrScanner = new Html5Qrcode("barcodeScannerViewport");
     const config = {
       fps: 10,
-      qrbox: { width: 250, height: 120 },
+      qrbox: { width: 240, height: 110 },
       aspectRatio: 1.5,
     };
 
-    await html5QrScanner.start(
-      { facingMode: "environment" },
-      config,
-      async (decodedText) => {
-        const clean = String(decodedText || "").replace(/\D/g, "");
-        if (clean.length === 8 || clean.length === 13 || clean.length === 12) {
-          // 読み取り成功時はカメラを一時停止して結果確認へ
-          await stopCameraBarcodeScanner();
-          await handleJanDetected(clean);
-        }
-      },
-      () => {
-        // スキャン中のフレームエラーは無視
+    const onScanSuccess = async (decodedText) => {
+      const clean = String(decodedText || "").replace(/\D/g, "");
+      if (clean.length === 8 || clean.length === 13 || clean.length === 12) {
+        await stopCameraBarcodeScanner();
+        await handleJanDetected(clean);
       }
-    );
+    };
+
+    // まず背面カメラ (environment) を試行し、PCウェブカメラ等で失敗した場合は利用可能なカメラ一覧から起動
+    try {
+      await html5QrScanner.start({ facingMode: "environment" }, config, onScanSuccess, () => {});
+    } catch (_) {
+      const cameras = await Html5Qrcode.getCameras();
+      if (cameras && cameras.length > 0) {
+        const backCam =
+          cameras.find((c) => /back|rear|environment|背面/i.test(c.label || "")) ||
+          cameras[cameras.length - 1];
+        await html5QrScanner.start(backCam.id, config, onScanSuccess, () => {});
+      } else {
+        await html5QrScanner.start({ facingMode: "user" }, config, onScanSuccess, () => {});
+      }
+    }
+
     isScannerRunning = true;
-    updateScanStatusBadge("カメラでバーコードを探しています...", "primary");
+    if (placeholder) placeholder.classList.add("d-none");
+    updateScanStatusBadge("カメラ起動中（バーコードを枠内に写してください）", "primary");
   } catch (err) {
     isScannerRunning = false;
-    viewport.innerHTML = `
-      <div class="text-white-50 small text-center py-4 px-3">
+    if (placeholder) {
+      placeholder.classList.remove("d-none");
+      placeholder.innerHTML = `
         <i class="bi bi-camera-video-off fs-3 d-block mb-1 text-warning"></i>
-        カメラを起動できませんでした（HTTPS接続またはカメラ権限が必要です）。<br/>
-        下の<strong>「写真・画像からバーコード読取」</strong>からスマホカメラ撮影画像を選べます。
-      </div>
-    `;
-    updateScanStatusBadge("写真選択または手入力モード", "secondary");
+        リアルタイムカメラを起動できませんでした。<br/>
+        <span class="extra-small">※スマホで <code>http://192...</code> から開いている場合、ブラウザの仕様で直接映像はブロックされるため、すぐ下の<strong>「写真・画像からバーコード読取」</strong>ボタンを押すとスマホカメラが起動して読み取れます！</span>
+      `;
+    }
+    updateScanStatusBadge("下の「写真・画像からバーコード読取」を押してください", "warning");
   }
 }
 
 async function stopCameraBarcodeScanner() {
+  const placeholder = document.getElementById("scannerPlaceholderText");
   if (html5QrScanner && isScannerRunning) {
     try {
       await html5QrScanner.stop();
@@ -1929,27 +1951,69 @@ async function stopCameraBarcodeScanner() {
     }
   }
   isScannerRunning = false;
+  if (placeholder) {
+    placeholder.classList.remove("d-none");
+    placeholder.innerHTML = `
+      <i class="bi bi-camera-video fs-2 d-block mb-1 text-info"></i>
+      カメラ停止中（「カメラを起動」または「写真・画像からバーコード読取」を押してください）
+    `;
+  }
 }
 
-async function handleScanBarcodeFromImageFile(file) {
+async function handleScanBarcodeFromImageFile(file, applyDirectlyToInlineForm = false) {
   if (!file) return;
   await stopCameraBarcodeScanner();
-  updateScanStatusBadge("画像を解析中...", "info");
+  updateScanStatusBadge("写真からバーコードを解析中...", "info");
+  showToast("写真からバーコードを解析しています...", "info");
 
   try {
-    if (typeof Html5Qrcode !== "undefined") {
-      const scanner = new Html5Qrcode("barcodeScannerViewport");
-      const decodedText = await scanner.scanFile(file, true);
-      const clean = String(decodedText || "").replace(/\D/g, "");
-      if (clean) {
-        await handleJanDetected(clean);
-        return;
+    let clean = "";
+
+    // 1. ブラウザネイティブ BarcodeDetector API が使える場合は高速検出
+    if ("BarcodeDetector" in window) {
+      try {
+        const detector = new window.BarcodeDetector({
+          formats: ["ean_13", "ean_8", "upc_a", "upc_e"],
+        });
+        const bitmap = await createImageBitmap(file);
+        const barcodes = await detector.detect(bitmap);
+        if (barcodes && barcodes.length > 0) {
+          clean = String(barcodes[0].rawValue || "").replace(/\D/g, "");
+        }
+      } catch (_) {
+        // Html5Qrcode にフォールバック
       }
     }
-    throw new Error("バーコードが検出できませんでした");
+
+    // 2. Html5Qrcode でファイル解析（専用隠しコンテナを使用）
+    if (!clean && typeof Html5Qrcode !== "undefined") {
+      const fileScanner = new Html5Qrcode("barcodeFileReaderHidden");
+      const decodedText = await fileScanner.scanFile(file, false);
+      clean = String(decodedText || "").replace(/\D/g, "");
+    }
+
+    if (!clean) {
+      throw new Error("バーコードが検出できませんでした");
+    }
+
+    await handleJanDetected(clean);
+
+    // 新規商品フォームの「写真から読取」から直接呼ばれた場合は、その場の入力欄にも即時反映
+    if (applyDirectlyToInlineForm) {
+      const scannedJan = document.getElementById("scannedJanInput")?.value || clean;
+      const scannedName = document.getElementById("scannedNameInput")?.value || "";
+      const scannedCat = document.getElementById("scannedCategorySelect")?.value || "日用品";
+      if (document.getElementById("newItemJan")) document.getElementById("newItemJan").value = scannedJan;
+      if (scannedName && document.getElementById("newItemName")) {
+        document.getElementById("newItemName").value = scannedName;
+      }
+      if (document.getElementById("newItemCategory")) {
+        document.getElementById("newItemCategory").value = scannedCat;
+      }
+    }
   } catch (_) {
     updateScanStatusBadge("バーコード未検出（直接入力できます）", "warning");
-    showToast("画像からバーコードを読み取れませんでした。もう一度鮮明に撮影するかJANを入力してください", "warning");
+    showToast("画像からバーコードを読み取れませんでした。バーコードにピントを合わせて撮影するかJANコードを手入力してください", "warning");
     document.getElementById("scannedNameInput")?.focus();
   }
 }
@@ -2055,20 +2119,19 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
-  // 「登録して選択」の左横にある「カメラで読取（JAN/品名）」ボタン＆モーダル制御
+  // 「登録して選択」の左横にある「カメラで読取」ボタン＆モーダル制御
   const scannerModalEl = document.getElementById("barcodeScannerModal");
-  document.getElementById("openBarcodeScannerBtn")?.addEventListener("click", () => {
-    if (!scannerModalEl) return;
-    // 現在の入力値をモーダル側に引き継ぐ
-    document.getElementById("scannedJanInput").value = document.getElementById("newItemJan")?.value || "";
-    document.getElementById("scannedNameInput").value = document.getElementById("newItemName")?.value || "";
-    document.getElementById("scannedCategorySelect").value =
-      document.getElementById("newItemCategory")?.value || "日用品";
-
-    bootstrap.Modal.getOrCreateInstance(scannerModalEl).show();
-  });
 
   if (scannerModalEl) {
+    scannerModalEl.addEventListener("show.bs.modal", () => {
+      // 新規商品パネルが閉じていたら開いておく
+      document.getElementById("newItemPanel")?.classList.remove("d-none");
+      // 現在の入力値をモーダル側に引き継ぐ
+      document.getElementById("scannedJanInput").value = document.getElementById("newItemJan")?.value || "";
+      document.getElementById("scannedNameInput").value = document.getElementById("newItemName")?.value || "";
+      document.getElementById("scannedCategorySelect").value =
+        document.getElementById("newItemCategory")?.value || "日用品";
+    });
     scannerModalEl.addEventListener("shown.bs.modal", () => {
       startCameraBarcodeScanner();
     });
@@ -2076,6 +2139,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       stopCameraBarcodeScanner();
     });
   }
+
+  document.getElementById("startScannerBtn")?.addEventListener("click", () => {
+    startCameraBarcodeScanner();
+  });
 
   document.getElementById("stopScannerBtn")?.addEventListener("click", () => {
     stopCameraBarcodeScanner();
@@ -2085,7 +2152,16 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("barcodeImageFileInput")?.addEventListener("change", (e) => {
     const file = e.target.files?.[0];
     if (file) {
-      handleScanBarcodeFromImageFile(file);
+      handleScanBarcodeFromImageFile(file, false);
+      e.target.value = "";
+    }
+  });
+
+  // 「登録して選択」の左横にある「写真から読取」ボタン（スマホの標準カメラが直接起動）
+  document.getElementById("inlineBarcodeImageInput")?.addEventListener("change", async (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      await handleScanBarcodeFromImageFile(file, true);
       e.target.value = "";
     }
   });
