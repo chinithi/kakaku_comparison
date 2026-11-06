@@ -1710,6 +1710,250 @@ async function initQrModalUrl() {
   renderQrCode(targetUrl);
 }
 
+// 9. カメラでJANバーコード読取 ＆ 品名自動検索 (html5-qrcode + OpenProducts/Food/Beauty/OpenBD API)
+let html5QrScanner = null;
+let isScannerRunning = false;
+
+function updateScanStatusBadge(text, variant = "secondary") {
+  const badge = document.getElementById("scanLookupStatusBadge");
+  if (!badge) return;
+  badge.textContent = text;
+  badge.className = `badge bg-${variant}-subtle text-${variant}-emphasis extra-small`;
+}
+
+async function lookupProductByJanCode(rawJan) {
+  const cleanJan = String(rawJan || "").replace(/\D/g, "");
+  if (!cleanJan) {
+    return { found: false, jan_code: "", name: "", category: "日用品" };
+  }
+
+  // ① 登録済みの商品マスターに同一JANコードがあるか確認
+  const existingItem = state.items.find((it) => it.jan_code === cleanJan);
+  if (existingItem) {
+    return {
+      found: true,
+      already_registered: true,
+      jan_code: cleanJan,
+      name: existingItem.name,
+      category: existingItem.category || "日用品",
+      item: existingItem,
+      source: "登録済み商品マスター",
+    };
+  }
+
+  // ② Flask APIモード時はバックエンドの `/api/jan-lookup/<jan>` を優先利用
+  if (state.mode === "api") {
+    try {
+      const res = await fetch(`/api/jan-lookup/${encodeURIComponent(cleanJan)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.status === "ok" && data.found) {
+          return data;
+        }
+      }
+    } catch (_) {
+      // フロントエンド直接検索へフォールバック
+    }
+  }
+
+  // ③ GitHub Pages 等のサーバーレス環境でも動く公開API横断検索
+  const endpoints = [
+    { source: "OpenProductsFacts", url: `https://world.openproductsfacts.org/api/v2/product/${cleanJan}.json`, defaultCat: "日用品" },
+    { source: "OpenFoodFacts", url: `https://world.openfoodfacts.org/api/v2/product/${cleanJan}.json`, defaultCat: "食品・飲料" },
+    { source: "OpenBeautyFacts", url: `https://world.openbeautyfacts.org/api/v2/product/${cleanJan}.json`, defaultCat: "ドラッグ・衛生" },
+  ];
+
+  for (const ep of endpoints) {
+    try {
+      const res = await fetch(ep.url);
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (data && data.status === 1 && data.product) {
+        const p = data.product;
+        const rawName = (
+          p.product_name_ja ||
+          p.product_name ||
+          p.generic_name_ja ||
+          p.generic_name ||
+          ""
+        ).trim();
+        const brand = ((p.brands || "").split(",")[0] || "").trim();
+        const qty = (p.quantity || "").trim();
+
+        if (rawName) {
+          let fullName = brand && !rawName.includes(brand) ? `${brand} ${rawName}`.trim() : rawName;
+          if (qty && !fullName.includes(qty)) {
+            fullName = `${fullName} ${qty}`.trim();
+          }
+          return {
+            found: true,
+            already_registered: false,
+            jan_code: cleanJan,
+            name: fullName,
+            category: ep.defaultCat,
+            source: ep.source,
+          };
+        }
+      }
+    } catch (_) {
+      // 次のデータベースへ
+    }
+  }
+
+  // ④ 書籍コード (978 / 979) の場合は OpenBD API で書名を取得
+  if (cleanJan.startsWith("978") || cleanJan.startsWith("979")) {
+    try {
+      const res = await fetch(`https://api.openbd.jp/v1/get?isbn=${cleanJan}`);
+      if (res.ok) {
+        const arr = await res.json();
+        const title = arr?.[0]?.summary?.title?.trim();
+        if (title) {
+          return {
+            found: true,
+            already_registered: false,
+            jan_code: cleanJan,
+            name: title,
+            category: "その他",
+            source: "OpenBD",
+          };
+        }
+      }
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  return {
+    found: false,
+    already_registered: false,
+    jan_code: cleanJan,
+    name: "",
+    category: "日用品",
+  };
+}
+
+async function handleJanDetected(rawJanText) {
+  const cleanJan = String(rawJanText || "").replace(/\D/g, "");
+  if (!cleanJan) return;
+
+  const janInput = document.getElementById("scannedJanInput");
+  const nameInput = document.getElementById("scannedNameInput");
+  const catSelect = document.getElementById("scannedCategorySelect");
+
+  if (janInput) janInput.value = cleanJan;
+  updateScanStatusBadge("品名を自動検索中...", "info");
+
+  const result = await lookupProductByJanCode(cleanJan);
+
+  if (result.found) {
+    if (nameInput) nameInput.value = result.name;
+    if (catSelect && result.category) catSelect.value = result.category;
+
+    if (result.already_registered) {
+      updateScanStatusBadge(`登録済み商品 (${result.source})`, "success");
+      showToast(`登録済みの「${result.name}」が見つかりました！`, "success");
+    } else {
+      updateScanStatusBadge(`自動取得成功 (${result.source})`, "success");
+      showToast(`バーコードから「${result.name}」を取得しました！`, "success");
+    }
+  } else {
+    updateScanStatusBadge("JAN読取完了（品名を入力してください）", "warning");
+    showToast(`JANコード (${cleanJan}) を読み取りました。品名を入力してください`, "info");
+    if (nameInput && !nameInput.value) {
+      nameInput.focus();
+    }
+  }
+}
+
+async function startCameraBarcodeScanner() {
+  const viewport = document.getElementById("barcodeScannerViewport");
+  if (!viewport) return;
+
+  if (typeof Html5Qrcode === "undefined") {
+    viewport.innerHTML = `
+      <div class="text-warning small text-center py-4 px-3">
+        スキャナーライブラリの読み込みに失敗しました。下の「写真・画像から読取」またはJAN手入力をご利用ください。
+      </div>
+    `;
+    return;
+  }
+
+  await stopCameraBarcodeScanner();
+  viewport.innerHTML = "";
+
+  try {
+    html5QrScanner = new Html5Qrcode("barcodeScannerViewport");
+    const config = {
+      fps: 10,
+      qrbox: { width: 250, height: 120 },
+      aspectRatio: 1.5,
+    };
+
+    await html5QrScanner.start(
+      { facingMode: "environment" },
+      config,
+      async (decodedText) => {
+        const clean = String(decodedText || "").replace(/\D/g, "");
+        if (clean.length === 8 || clean.length === 13 || clean.length === 12) {
+          // 読み取り成功時はカメラを一時停止して結果確認へ
+          await stopCameraBarcodeScanner();
+          await handleJanDetected(clean);
+        }
+      },
+      () => {
+        // スキャン中のフレームエラーは無視
+      }
+    );
+    isScannerRunning = true;
+    updateScanStatusBadge("カメラでバーコードを探しています...", "primary");
+  } catch (err) {
+    isScannerRunning = false;
+    viewport.innerHTML = `
+      <div class="text-white-50 small text-center py-4 px-3">
+        <i class="bi bi-camera-video-off fs-3 d-block mb-1 text-warning"></i>
+        カメラを起動できませんでした（HTTPS接続またはカメラ権限が必要です）。<br/>
+        下の<strong>「写真・画像からバーコード読取」</strong>からスマホカメラ撮影画像を選べます。
+      </div>
+    `;
+    updateScanStatusBadge("写真選択または手入力モード", "secondary");
+  }
+}
+
+async function stopCameraBarcodeScanner() {
+  if (html5QrScanner && isScannerRunning) {
+    try {
+      await html5QrScanner.stop();
+      await html5QrScanner.clear();
+    } catch (_) {
+      // ignore
+    }
+  }
+  isScannerRunning = false;
+}
+
+async function handleScanBarcodeFromImageFile(file) {
+  if (!file) return;
+  await stopCameraBarcodeScanner();
+  updateScanStatusBadge("画像を解析中...", "info");
+
+  try {
+    if (typeof Html5Qrcode !== "undefined") {
+      const scanner = new Html5Qrcode("barcodeScannerViewport");
+      const decodedText = await scanner.scanFile(file, true);
+      const clean = String(decodedText || "").replace(/\D/g, "");
+      if (clean) {
+        await handleJanDetected(clean);
+        return;
+      }
+    }
+    throw new Error("バーコードが検出できませんでした");
+  } catch (_) {
+    updateScanStatusBadge("バーコード未検出（直接入力できます）", "warning");
+    showToast("画像からバーコードを読み取れませんでした。もう一度鮮明に撮影するかJANを入力してください", "warning");
+    document.getElementById("scannedNameInput")?.focus();
+  }
+}
+
 async function handlePasteSyncCode() {
   try {
     let code = "";
@@ -1790,6 +2034,120 @@ document.addEventListener("DOMContentLoaded", async () => {
       e.preventDefault();
       handleCreateItem();
     }
+  });
+
+  // 新規商品パネル内のJANコードから品名を自動検索するボタン
+  document.getElementById("lookupJanBtn")?.addEventListener("click", async () => {
+    const janVal = (document.getElementById("newItemJan")?.value || "").trim();
+    if (!janVal) {
+      showToast("検索するJANコードを入力するか、「カメラで読取」を押してください", "warning");
+      return;
+    }
+    const res = await lookupProductByJanCode(janVal);
+    if (res.found) {
+      document.getElementById("newItemJan").value = res.jan_code;
+      document.getElementById("newItemName").value = res.name;
+      if (res.category) document.getElementById("newItemCategory").value = res.category;
+      showToast(`「${res.name}」を自動入力しました！`, "success");
+    } else {
+      showToast("該当する商品名が見つかりませんでした。品名を手入力してください", "info");
+      document.getElementById("newItemName")?.focus();
+    }
+  });
+
+  // 「登録して選択」の左横にある「カメラで読取（JAN/品名）」ボタン＆モーダル制御
+  const scannerModalEl = document.getElementById("barcodeScannerModal");
+  document.getElementById("openBarcodeScannerBtn")?.addEventListener("click", () => {
+    if (!scannerModalEl) return;
+    // 現在の入力値をモーダル側に引き継ぐ
+    document.getElementById("scannedJanInput").value = document.getElementById("newItemJan")?.value || "";
+    document.getElementById("scannedNameInput").value = document.getElementById("newItemName")?.value || "";
+    document.getElementById("scannedCategorySelect").value =
+      document.getElementById("newItemCategory")?.value || "日用品";
+
+    bootstrap.Modal.getOrCreateInstance(scannerModalEl).show();
+  });
+
+  if (scannerModalEl) {
+    scannerModalEl.addEventListener("shown.bs.modal", () => {
+      startCameraBarcodeScanner();
+    });
+    scannerModalEl.addEventListener("hide.bs.modal", () => {
+      stopCameraBarcodeScanner();
+    });
+  }
+
+  document.getElementById("stopScannerBtn")?.addEventListener("click", () => {
+    stopCameraBarcodeScanner();
+    updateScanStatusBadge("カメラ停止中", "secondary");
+  });
+
+  document.getElementById("barcodeImageFileInput")?.addEventListener("change", (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      handleScanBarcodeFromImageFile(file);
+      e.target.value = "";
+    }
+  });
+
+  document.getElementById("reLookupScannedJanBtn")?.addEventListener("click", async () => {
+    const janVal = document.getElementById("scannedJanInput")?.value || "";
+    if (!janVal.trim()) {
+      showToast("JANコードを入力してください", "warning");
+      return;
+    }
+    await handleJanDetected(janVal);
+  });
+
+  // モーダル内「フォームへ反映のみ」ボタン
+  document.getElementById("applyScanToFormBtn")?.addEventListener("click", () => {
+    const jan = (document.getElementById("scannedJanInput")?.value || "").trim();
+    const name = (document.getElementById("scannedNameInput")?.value || "").trim();
+    const cat = document.getElementById("scannedCategorySelect")?.value || "日用品";
+
+    if (jan) document.getElementById("newItemJan").value = jan;
+    if (name) document.getElementById("newItemName").value = name;
+    document.getElementById("newItemCategory").value = cat;
+
+    if (scannerModalEl) {
+      bootstrap.Modal.getOrCreateInstance(scannerModalEl).hide();
+    }
+    showToast("読み取ったJANコード・品名を入力欄に反映しました", "primary");
+  });
+
+  // モーダル内「このまま登録して選択」ボタン
+  document.getElementById("registerScannedItemNowBtn")?.addEventListener("click", async () => {
+    const jan = (document.getElementById("scannedJanInput")?.value || "").replace(/\D/g, "");
+    const name = (document.getElementById("scannedNameInput")?.value || "").trim();
+    const cat = document.getElementById("scannedCategorySelect")?.value || "日用品";
+
+    // 既に同じJANコードの商品がマスターにある場合は新規作成せずそれをそのまま選択
+    const existing = jan ? state.items.find((it) => it.jan_code === jan) : null;
+    if (existing) {
+      if (scannerModalEl) {
+        bootstrap.Modal.getOrCreateInstance(scannerModalEl).hide();
+      }
+      document.getElementById("newItemPanel")?.classList.add("d-none");
+      selectItemById(existing.id, true);
+      showToast(`登録済みの「${existing.name}」を選択しました！`, "success");
+      document.getElementById("shopNameInput")?.focus();
+      return;
+    }
+
+    if (!name) {
+      showToast("登録する商品名を入力してください", "warning");
+      document.getElementById("scannedNameInput")?.focus();
+      return;
+    }
+
+    document.getElementById("newItemJan").value = jan;
+    document.getElementById("newItemName").value = name;
+    document.getElementById("newItemCategory").value = cat;
+
+    if (scannerModalEl) {
+      bootstrap.Modal.getOrCreateInstance(scannerModalEl).hide();
+    }
+    await handleCreateItem();
   });
 
   document.getElementById("priceInput")?.addEventListener("input", evaluateLowestPriceHighlight);

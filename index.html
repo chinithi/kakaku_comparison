@@ -191,14 +191,32 @@
                       </select>
                     </div>
                     <div class="col-6 col-md-4">
-                      <input
-                        type="text"
-                        id="newItemJan"
-                        class="form-control form-control-sm"
-                        placeholder="JANコード (任意)"
-                      />
+                      <div class="input-group input-group-sm">
+                        <input
+                          type="text"
+                          id="newItemJan"
+                          class="form-control"
+                          inputmode="numeric"
+                          placeholder="JANコード (任意)"
+                        />
+                        <button
+                          type="button"
+                          class="btn btn-outline-secondary"
+                          id="lookupJanBtn"
+                          title="入力したJANコードから品名を自動検索"
+                        >
+                          <i class="bi bi-magic"></i>
+                        </button>
+                      </div>
                     </div>
-                    <div class="col-12 text-end mt-2">
+                    <div class="col-12 d-flex align-items-center justify-content-end gap-2 flex-wrap mt-2">
+                      <button
+                        type="button"
+                        class="btn btn-outline-primary btn-sm px-3 fw-bold"
+                        id="openBarcodeScannerBtn"
+                      >
+                        <i class="bi bi-camera-fill me-1"></i>カメラで読取（JAN/品名）
+                      </button>
                       <button type="button" class="btn btn-primary btn-sm px-3 fw-bold" id="createItemBtn">
                         <i class="bi bi-check2-circle me-1"></i>登録して選択
                       </button>
@@ -815,6 +833,127 @@
     </div>
   </main>
 
+  <!-- カメラでJANバーコード＆品名読取モーダル -->
+  <div
+    class="modal fade"
+    id="barcodeScannerModal"
+    tabindex="-1"
+    aria-labelledby="barcodeScannerModalLabel"
+    aria-hidden="true"
+  >
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-0 rounded-4 shadow">
+        <div class="modal-header bg-dark text-white border-0 rounded-top-4">
+          <h5 class="modal-title fw-bold h6 mb-0" id="barcodeScannerModalLabel">
+            <i class="bi bi-upc-scan me-2"></i>カメラでバーコード / 商品読取
+          </h5>
+          <button
+            type="button"
+            class="btn-close btn-close-white"
+            data-bs-dismiss="modal"
+            aria-label="閉じる"
+          ></button>
+        </div>
+        <div class="modal-body p-3 p-md-4">
+          <p class="extra-small text-muted mb-2 text-center">
+            商品のバーコード（JANコード: 13桁/8桁）をカメラ枠内に写すと自動で読み取り、品名を検索します。
+          </p>
+
+          <!-- カメラ映像エリア (html5-qrcode) -->
+          <div
+            id="barcodeScannerViewport"
+            class="rounded-3 overflow-hidden bg-black mx-auto mb-3 position-relative"
+            style="min-height: 230px; max-width: 420px;"
+          >
+            <div class="text-white-50 small text-center py-5" id="scannerPlaceholderText">
+              <i class="bi bi-camera-video fs-2 d-block mb-1"></i>
+              カメラを起動しています...
+            </div>
+          </div>
+
+          <!-- カメラが起動できない環境や写真撮影用の画像ファイル読取ボタン -->
+          <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+            <label class="btn btn-sm btn-outline-secondary fw-semibold mb-0">
+              <i class="bi bi-image me-1"></i>写真・画像からバーコード読取
+              <input
+                type="file"
+                id="barcodeImageFileInput"
+                accept="image/*"
+                capture="environment"
+                class="d-none"
+              />
+            </label>
+            <button type="button" class="btn btn-sm btn-outline-danger" id="stopScannerBtn">
+              <i class="bi bi-stop-circle me-1"></i>カメラ停止
+            </button>
+          </div>
+
+          <!-- スキャン結果・品名確認＆編集プレビュー -->
+          <div class="p-3 rounded-3 bg-light border">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+              <span class="extra-small fw-bold text-secondary">
+                <i class="bi bi-check2-square me-1"></i>読み取り結果（そのまま編集もできます）
+              </span>
+              <span class="badge bg-secondary-subtle text-secondary extra-small" id="scanLookupStatusBadge">
+                待機中
+              </span>
+            </div>
+            <div class="row g-2">
+              <div class="col-12 col-sm-5">
+                <label class="form-label extra-small text-muted mb-1">JANコード</label>
+                <div class="input-group input-group-sm">
+                  <input
+                    type="text"
+                    id="scannedJanInput"
+                    class="form-control font-monospace fw-bold"
+                    inputmode="numeric"
+                    placeholder="490..."
+                  />
+                  <button
+                    type="button"
+                    class="btn btn-outline-primary"
+                    id="reLookupScannedJanBtn"
+                    title="このJANコードで品名を再検索"
+                  >
+                    <i class="bi bi-search"></i>
+                  </button>
+                </div>
+              </div>
+              <div class="col-12 col-sm-7">
+                <label class="form-label extra-small text-muted mb-1">商品名（自動取得 / 手動入力）</label>
+                <input
+                  type="text"
+                  id="scannedNameInput"
+                  class="form-control form-control-sm fw-bold"
+                  placeholder="バーコード読取後に自動入力されます"
+                />
+              </div>
+              <div class="col-12 col-sm-6">
+                <label class="form-label extra-small text-muted mb-1">カテゴリ</label>
+                <select id="scannedCategorySelect" class="form-select form-select-sm">
+                  <option value="日用品" selected>日用品</option>
+                  <option value="食品・飲料">食品・飲料</option>
+                  <option value="ドラッグ・衛生">ドラッグ・衛生</option>
+                  <option value="ベビー・ペット">ベビー・ペット</option>
+                  <option value="家電・消耗品">家電・消耗品</option>
+                  <option value="その他">その他</option>
+                </select>
+              </div>
+              <div class="col-12 col-sm-6 d-flex align-items-end justify-content-end gap-2 mt-2">
+                <button type="button" class="btn btn-sm btn-outline-primary fw-bold" id="applyScanToFormBtn">
+                  フォームへ反映のみ
+                </button>
+                <button type="button" class="btn btn-sm btn-primary fw-bold" id="registerScannedItemNowBtn">
+                  <i class="bi bi-check2-circle me-1"></i>このまま登録して選択
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- スマホアクセス用 QRコード表示モーダル -->
   <div
     class="modal fade"
@@ -894,6 +1033,8 @@
     </div>
   </div>
 
+  <!-- html5-qrcode CDN (カメラでJAN/EANバーコードを読み取るライブラリ) -->
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
   <!-- QRCode.js CDN (クライアントサイドQRコード生成ライブラリ) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <!-- Bootstrap 5.3 Bundle JS CDN -->
