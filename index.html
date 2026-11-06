@@ -221,13 +221,13 @@
                       </div>
                     </div>
                     <div class="col-12 mt-2">
-                      <div class="d-flex align-items-center justify-content-end gap-2 flex-nowrap">
-                        <!-- 直接スマホカメラ/画像選択も起動できるファイル入力ボタン + スキャナーモーダル起動ボタン -->
+                      <!-- 上の段: 写真からバーコード読取 -->
+                      <div class="d-flex justify-content-end mb-2">
                         <label
-                          class="btn btn-outline-secondary btn-sm px-2 fw-bold mb-0 text-nowrap"
+                          class="btn btn-outline-secondary btn-sm px-3 fw-bold mb-0 text-nowrap"
                           title="スマホのカメラで撮影または写真を選んでバーコード読取"
                         >
-                          <i class="bi bi-image me-1"></i>写真から読取
+                          <i class="bi bi-image me-1"></i>写真・画像からバーコード読取
                           <input
                             type="file"
                             id="inlineBarcodeImageInput"
@@ -236,6 +236,9 @@
                             class="d-none"
                           />
                         </label>
+                      </div>
+                      <!-- 下の段: カメラで読取 & 登録して選択 -->
+                      <div class="d-flex align-items-center justify-content-end gap-2 flex-nowrap">
                         <button
                           type="button"
                           class="btn btn-success btn-sm px-3 fw-bold text-nowrap"
@@ -906,13 +909,10 @@
           <!-- ファイル解析用の隠しコンテナ -->
           <div id="barcodeFileReaderHidden" class="d-none"></div>
 
-          <!-- カメラ起動・停止 ＆ 写真ファイル読取ボタン群 -->
-          <div class="d-flex justify-content-center align-items-center flex-wrap gap-2 mb-3">
-            <button type="button" class="btn btn-sm btn-success fw-bold px-3" id="startScannerBtn">
-              <i class="bi bi-camera-video-fill me-1"></i>カメラを起動
-            </button>
+          <!-- 上の段: 写真ファイル読取ボタン -->
+          <div class="d-flex justify-content-center mb-2">
             <label class="btn btn-sm btn-primary fw-bold px-3 mb-0">
-              <i class="bi bi-camera me-1"></i>写真・画像からバーコード読取
+              <i class="bi bi-image me-1"></i>写真・画像からバーコード読取
               <input
                 type="file"
                 id="barcodeImageFileInput"
@@ -921,6 +921,13 @@
                 class="d-none"
               />
             </label>
+          </div>
+
+          <!-- 下の段: カメラ起動・停止ボタン -->
+          <div class="d-flex justify-content-center align-items-center gap-2 mb-3">
+            <button type="button" class="btn btn-sm btn-success fw-bold px-3" id="startScannerBtn">
+              <i class="bi bi-camera-video-fill me-1"></i>カメラで読取（起動）
+            </button>
             <button type="button" class="btn btn-sm btn-outline-danger" id="stopScannerBtn">
               <i class="bi bi-stop-circle me-1"></i>停止
             </button>
